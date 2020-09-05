@@ -1,0 +1,463 @@
+1. Bootstrap a Kubernetes v1.10 cluster using kubeadm:
+
+On all:
+
+Follow [1] and [2].
+
+On master:
+
+kubeadm init --pod-network-cidr=10.244.0.0/16
+
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+kubectl apply -f https://docs.projectcalico.org/v3.14/manifests/calico.yaml
+
+On workers:
+
+sudo kubeadm join [your unique string from the kubeadm init command]
+
+[1] https://kubernetes.io/docs/setup/production-environment/container-runtimes/
+[2] https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/
+
+******************************************************
+
+2. Enable cluster auditing:
+
+On master:
+
+cd /etc/kubernetes
+sudo wget https://raw.githubusercontent.com/kubernetes/website/master/content/en/examples/audit/audit-policy.yaml
+sudo vi /etc/kubernetes/manifests/kube-apiserver.yaml
+# Add:
+--audit-policy-file=/etc/kubernetes/audit-policy.yaml
+--audit-log-path=/var/log/audit.log
+# Then also add the hostPaths and volumeMounts from [1].
+# Save the file. kube-apiserver will be automatically restarted. Wait couple of minutes. Check /var/log/audit.log.
+# If any issue: sudo cat /var/log/containers/*api* | grep -i Error
+
+kubectl get pods -n kube-system | grep api # In my case, the kube-apiserver pod name is 'kube-apiserver-minikube'
+kubectl get pod kube-apiserver-minikube -n kube-system -o yaml # Verify changes were applied
+
+[1] https://kubernetes.io/docs/tasks/debug-application-cluster/audit/#log-backend
+
+******************************************************
+
+3. Create a deployment running nginx version 1.12.2 that will run in 2 pods:
+
+kubectl run --image=nginx:1.12.2 --replicas=2 nginx
+kubectl get deployments
+kubectl get replicaset
+kubectl scale deployment nginx --replicas=4
+kubectl get replicaset
+kubectl scale deployment nginx --replicas=2
+kubectl get replicaset
+kubectl set image deployment nginx nginx=nginx:1.13.8
+kubectl rollout status deployment nginx
+kubectl rollout history deployment nginx
+# To record each step we could use:
+kubectl set image deployment nginx nginx=nginx:1.13.8 --record
+kubectl rollout undo deployment nginx
+# To rollback to a specific revision shown in 'history': kubectl rollout undo deployment nginx --to-revision=1
+
+[1] https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
+[2] https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#run
+[3] https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#set
+[4] https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#scale
+[4] https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#rollout
+
+******************************************************
+
+4. Create a service that uses a scratch disk:
+
+# ex4_*.yaml # kubectl apply -f
+# You could also use "kubectl edit deployment nginx" to perform the changes, like happens in other exercises.
+
+[1] https://kubernetes.io/docs/concepts/storage/volumes/
+[2] https://kubernetes.io/docs/concepts/storage/persistent-volumes/
+[3] https://kubernetes.io/docs/tasks/configure-pod-container/configure-volume-storage/
+
+******************************************************
+
+5. Create a pod with a Liveness and Readiness probes:
+
+# ex5_*.yaml # kubectl apply -f
+# Check: kubectl describe pod upnready | grep -E 'Readiness|Liveness|Ready'
+
+[1] https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+
+******************************************************
+
+6. Create a daemon set:
+
+# ex6_*.yaml # kubectl apply -f
+# Check: kubectl get daemonset # Check for 'Available' (should be '1' after 30 secs)
+
+[1] https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/
+[2] https://kubernetes.io/docs/tasks/manage-daemon/update-daemon-set/
+
+******************************************************
+
+7. Create a busybox pod:
+
+kubectl run busybox --image=busybox --restart='Never' -- sleep 9999999 # The flag 'restart' set to 'never' forces kubectl to create a pod instead of a deployment
+kubectl edit pod busybox # Add label "exercise: seven" under "spec.template.metadata.labels", and then save the file
+kubectl get pods --show-labels # Confirm a new pod was created with the label "exercise=seven", replacing the old one
+# If you want to run a command in the pod just to test the pod is running fine: kubectl exec -it busybox-- ls
+
+[1] https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#run
+[1] https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#edit
+
+******************************************************
+
+8. Create a pod that uses secrets:
+
+kubectl create secret generic --from-literal=USERNAME=minikube --from-literal=PASSWORD=minipassword minisecret
+# If you wanted to generate a yaml: kubectl create secret generic --from-literal=USERNAME=minikube --from-literal=PASSWORD=minipassword -o yaml --dry-run minisecret
+kubectl get secrets
+kubectl describe secret minisecret
+
+# To decrypt the password and check they're OK:
+# kubectl get secret minisecret -o yaml
+# echo <hash> | base64 -d
+
+# ex8_*.yaml # kubectl apply -f
+# Check: kubectl get pods
+
+# Checking the secrets inside the pods:
+
+kubectl logs busybox-secret-env
+kubectl logs busybox-secret-vol
+
+[1] https://kubernetes.io/docs/concepts/configuration/secret/
+[2] https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#-em-secret-em-
+
+******************************************************
+
+9. Create a scheduled Job:
+
+kubectl create cronjob date-every-3-min --image=busybox --schedule="*/3 * * * *" -- date
+# If you wanted to generate a yaml: kubectl create cronjob date-every-3-min --image=busybox --schedule="*/3 * * * *" -o yaml --dry-run -- date
+kubectl get cronjobs
+kubectl describe cronjob date-every-3-min
+
+# To look at the outputs:
+
+kubectl get jobs # Monitor cronjobs being run. Take the name of the last job-name from this cronjob to use it in the next command
+kubectl logs `kubectl get pods --selector=job-name=date-every-3-min-1599183180 --output=jsonpath={.items[*].metadata.name}` # This should display the date
+# OR
+kubectl get pods # Just look for the pods with the name started by "date-every-3-min"
+kubectl logs date-every-3-min-1599183180-vxvzl # This should display the date
+
+[1] https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/
+[2] https://kubernetes.io/docs/tasks/job/automated-tasks-with-cron-jobs/
+[3] https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#-em-cronjob-em-
+
+******************************************************
+
+10. Create a parallel Job:
+
+# ex10_*.yaml # kubectl apply -f
+# I took the example for [1] but another way to create the template could be: kubectl create job my-job --image=busybox -o yaml --dry-run -- echo "Hello parallel world."
+# Check: kubectl get jobs
+
+# To look at the job running and outputs:
+
+kubectl get jobs # It will stop once it reaches 80
+kubectl get pods # Relevant pods are those who name starts by "parallel". Note that 5 pods are always being created at a time (parallelism)
+kubectl logs pod parallel-t5dq2 # This should display "Hello parallel world."
+
+[1] https://kubernetes.io/docs/concepts/workloads/controllers/job/
+[2] https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#-em-job-em-
+
+******************************************************
+
+11. Create a service:
+
+kubectl run --image=nginx --replicas=3 --port=80 nginx-deployment
+# Getting the yaml: kubectl run --image=nginx --replicas=3 --port=80 nginx-deployment -o yaml --dry-run
+kubectl expose deployment nginx-deployment --type=LoadBalancer --port=80 --target-port=80 --name nginx-service
+# Getting the yaml: kubectl expose deployment nginx-deployment --type=LoadBalancer --port=80 --target-port=80 --name nginx-service -o yaml --dry-run
+
+[1] https://kubernetes.io/docs/tasks/access-application-cluster/create-external-load-balancer/
+[2] https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#run
+[3] https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#exposecommands#-em-job-em-
+
+******************************************************
+
+12. Create a horizontal autoscaling group:
+
+sudo minikube addons list # If using Minikube
+sudo minikube addons enable metrics-server # If using Minikube
+
+kubectl run --image=nginx --replicas=3 --port=80 nginx-deployment
+# Getting the yaml: kubectl run --image=nginx --replicas=3 --port=80 nginx-deployment -o yaml --dry-run
+
+kubectl autoscale deployment nginx-deployment --cpu-percent=50 --min=1 --max=10
+# Getting the yaml: kubectl autoscale deployment nginx-deployment --cpu-percent=50 --min=1 --max=10 -o yaml --dry-run
+
+kubectl describe horizontalpodautoscaler nginx-deployment
+
+[1] https://kubernetes.io/docs/tutorials/hello-minikube/#enable-addons
+[2] https://kubernetes.io/blog/2016/07/autoscaling-in-kubernetes/
+[3] https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#autoscale
+
+******************************************************
+
+13. Create pods with restricted resource usage:
+
+# Create both pods
+kubectl apply -f ex13_pods.yaml
+
+# Edit second pod
+kubectl delete pod nginx-limits-2 # Memory limit change implies pod recreation
+kubectl apply -f ex13_pod2_modified.yaml 
+
+[1] https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/#requests-and-limits
+
+******************************************************
+
+14. Create an init container:
+
+# ex14_*.yaml # kubectl apply -f
+
+kubectl get pods -o wide # Get "nginx-init" IP
+wget -O- http://172.17.0.10 | grep -i kube # Test the index.html is the one from kubernetes.io
+
+[1] https://kubernetes.io/docs/concepts/workloads/pods/init-containers/
+[2] https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-initialization/
+
+******************************************************
+
+15. Create a pod with specific UID:
+
+# ex15_*.yaml # kubectl apply -f
+
+kubectl exec -it busybox-uid-1000 -- sh -c 'id; ps;' # Check that user's UID and all processes' UID is '1000'
+
+[1] https://kubernetes.io/docs/tasks/configure-pod-container/security-context/#set-the-security-context-for-a-pod
+
+******************************************************
+
+16. Create a namespace:
+
+kubectl create namespace new-space
+kubectl run busybox --image=busybox --restart='Never' -n new-space -- sleep 9999999 # The flag 'restart' set to 'never' forces kubectl to create a pod instead of a deployment
+
+# ex16_*.yaml # kubectl apply -f
+
+kubectl describe resourcequota new-space-quotas
+
+[1] https://kubernetes.io/docs/concepts/policy/resource-quotas/
+[2] https://kubernetes.io/docs/tasks/administer-cluster/manage-resources/quota-memory-cpu-namespace/
+[3] https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#-em-namespace-em-
+[4] https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#run
+
+******************************************************
+
+17. Write an ingress rule that redirects calls to /foo to one service and to /bar to another:
+
+sudo minikube addons list # If using Minikube
+sudo minikube addons enable ingress # If using Minikube
+
+kubectl run --image=nginx --port=80 nginx-ingress-deployment-1
+kubectl expose deployment nginx-ingress-deployment-1 --port=80 --target-port=80 --name=nginx-ingress-service-1
+kubectl run --image=nginx --port=80 nginx-ingress-deployment-2
+kubectl expose deployment nginx-ingress-deployment-2 --port=80 --target-port=80 --name=nginx-ingress-service-2
+
+# ex17_*.yaml # kubectl apply -f
+
+kubectl get ingress -o wide # Get Ingress IP
+
+# The next command will make current machine resolve nginx-ingress.com to Ingress IP so we can run wget in the next command
+sudo bash -c 'echo "192.168.122.102 nginx-ingress.com" >> /etc/hosts'
+
+# Test
+wget -O- http://nginx-ingress.com/foo
+wget -O- http://nginx-ingress.com/bar
+
+[1] https://kubernetes.io/docs/tutorials/hello-minikube/#enable-addons
+[2] https://kubernetes.io/docs/concepts/services-networking/ingress/
+[3] https://kubernetes.io/docs/tasks/access-application-cluster/ingress-minikube/
+
+******************************************************
+
+18. Write a service that exposes nginx on a nodeport:
+
+# Create the Service of type NodePort
+kubectl run --image=nginx nginx-deployment
+kubectl expose deployment nginx-deployment --type=NodePort --port=80 --target-port=80 --name=nginx-service
+
+# Change to Cluster IP
+kubectl edit service nginx-service
+# Comment spec.ports[].nodePort
+# Change spec.type from "NodePort" to "ClusterIP"
+# Save
+kubectl get service # Confirm the changes
+
+kubectl scale deployment nginx-deployment --replicas=3
+kubectl get replicaset # Confirm the changes
+
+# Change to use ExternalIP
+kubectl edit service nginx-service
+# Add "spec.externalIPs" field with one entry below like "- 80.11.12.10"
+# Save
+kubectl get service # Confirm the changes
+
+# Change to use LoadBalancer
+kubectl edit service nginx-service
+# Change spec.type from "ClusterIP" to "LoadBalancer"
+# You can also define spec.ports[].nodePort, or it will be randomly generated
+# Save
+kubectl get service # Confirm the changes
+
+[1] https://kubernetes.io/docs/concepts/services-networking/service/
+[2] https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#run
+[3] https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#edit
+[4] https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#scale
+
+******************************************************
+
+19. Backup the etcd database:
+
+sudo apt-get install etcd-client -y
+
+kubectl get pods -n kube-system -o wide | grep etcd
+# Since I use minikube, my etcd pod name is "etcd-minikube"
+
+kubectl get pod etcd-minikube -n kube-system -o yaml | grep -Ei "trusted-ca-file|cert-file|key-file|listen-client" | grep -v peer
+# Another option: sudo cat /etc/kubernetes/manifests/etcd.yaml | grep -Ei "trusted-ca-file|cert-file|key-file|listen-client" | grep -v peer
+
+# Save the 4 outputs like this (change to your values):
+ENDPOINT=https://192.168.122.102:2379
+CACERT=/var/lib/minikube/certs/etcd/ca.crt
+CERT=/var/lib/minikube/certs/etcd/server.crt
+KEY=/var/lib/minikube/certs/etcd/server.key
+
+sudo mkdir -p /opt/baks/etcd0001
+
+sudo ETCDCTL_API=3 etcdctl \
+--endpoints $ENDPOINT \
+--cacert $CACERT \
+--cert $CERT \
+--key $KEY \
+snapshot save /opt/baks/etcd0001/backup.db
+
+[1] https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/
+
+******************************************************
+
+20. Create a networking policy such that only pods with the label access=granted can talk to it:
+
+# ex20_*.yaml # kubectl apply -f
+
+kubectl get networkpolicy
+kubectl describe networkpolicy nginx-network-policy
+
+# Create the nginx pod
+kubectl run --image=nginx --labels="app=nginx" nginx
+
+kubectl get pods -o wide --show-labels
+# Take nginx IP. In this case will be 172.17.0.6
+
+# Test with and without label "access=granted"
+kubectl run -it --rm --image=busybox busybox-non-granted --restart='Never' -- wget -O- http://172.17.0.6 # Should not work
+kubectl run -it --rm --image=busybox busybox-granted --labels="access=granted" --restart='Never' -- wget -O- http://172.17.0.6 # Should work
+
+# The flag 'restart' set to 'never' forces kubectl to create a pod instead of a deployment. 'rm' will remove the pod after running the wget.
+
+[1] https://kubernetes.io/docs/concepts/services-networking/network-policies/
+[2] https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#run
+
+******************************************************
+
+21. Enable certificate rotation for the cluster:
+
+sudo vi /etc/systemd/system/kubelet.service.d/10-kubeadm.conf # Name might be different. Add "--rotate-certificates" to 'ExecStart' and save the file
+
+sudo systemctl daemon-reload
+sudo systemctl restart kubelet
+
+sudo ps -ef | grep kubelet # Check that "--rotate-certificates" is loaded
+
+[1] https://kubernetes.io/docs/tasks/tls/certificate-rotation/
+
+******************************************************
+
+22. Create 2 pod definitions:
+
+# ex22_*.yaml # kubectl apply -f
+
+kubectl get pods -o wide # Both should be running on same node
+
+[1] https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#always-co-located-in-the-same-node
+
+******************************************************
+
+23. Debug pod failure:
+
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/website/master/content/en/examples/debug/termination.yaml
+
+kubectl get pods
+# Wait a while till it fails in "CrashLoopBackOff"
+
+kubectl describe pod termination-demo
+
+# Inside we find:
+# Message:   Sleep expired
+# We can also see that it is running the following command:
+# /bin/sh -c 'sleep 10 && echo Sleep expired > /dev/termination-log'
+# Basically, the sleep is too short.
+# Another way to get this message is:
+#  kubectl get pod termination-demo -o go-template="{{range .status.containerStatuses}}{{.lastState.terminated.message}}{{end}}"
+
+# To change the termination message, we have to delete the pod first:
+kubectl delete pod termination-demo
+
+# Now we have to download the yaml:
+get -O ex23_pod.yaml https://raw.githubusercontent.com/kubernetes/website/master/content/en/examples/debug/termination.yaml
+
+# Edit the file ex23_pod.yaml under spec.containers[].args and change the termination message. Apply it again. You have the modified file already attached for convenience.
+
+# ex23_*.yaml # kubectl apply -f
+
+# Once it fails again, repeat:
+kubectl get pod termination-demo -o go-template="{{range .status.containerStatuses}}{{.lastState.terminated.message}}{{end}}"
+# The message should now be: "Sleep expired modified"
+
+[1] https://kubernetes.io/docs/tasks/debug-application-cluster/determine-reason-pod-failure/
+
+******************************************************
+
+24. Audit the cluster:
+
+# Component status 
+kubectl get componentstatus
+
+# All nodes should be ready
+kubectl get nodes
+
+# All kube-system pods should be OK
+kubectl get pods -n kube-system
+
+# Complete health status
+kubectl cluster-info dump
+
+# Kubelet logs
+sudo cat /var/log/syslog | grep kubelet
+
+# Kubernetes system pod's container logs
+sudo cat /var/log/containers/kube-apiserver*
+sudo cat /var/log/containers/kube-proxy*
+sudo cat /var/log/containers/kube-controller-manager*
+sudo cat /var/log/containers/kube-scheduler*
+
+# Audit logs (implies audit was configured on exercise 2)
+sudo cat /var/log/audit.log
+
+# In all forementioned logs the following grep might be useful:
+# grep -Ei 'err|warn|fail|fatal'
+
+[1] https://kubernetes.io/docs/tasks/debug-application-cluster/debug-cluster/
+[2] https://kubernetes.io/docs/reference/kubectl/overview/#resource-types

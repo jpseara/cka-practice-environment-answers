@@ -1,0 +1,15 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: parallel
+spec:
+  parallelism: 5
+  completions: 80
+  template:
+    spec:
+      containers:
+      - name: busybox
+        image: busybox
+        command: ["echo",  "Hello parallel world."]
+      restartPolicy: Never
+  backoffLimit: 5
