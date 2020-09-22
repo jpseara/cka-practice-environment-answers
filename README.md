@@ -1,5 +1,5 @@
 # cka-practice-environment-answers
-Answers for Arush Salil's CKA Lab. You can find the Arush Salil's project here: [1].
+Answers for Arush Salil's CKA exam simulator Lab. You can find the Arush Salil's project here: [1].
 
 I used kubectl commands instead of manifests whenever possible.
 
